@@ -1,10 +1,12 @@
 
-name: Build SADEE EDITOR PRO APK
+name: SADEE EDITOR PRO APK BUILD
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
@@ -14,68 +16,123 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Node Setup
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Setup Java
+      - name: Java Setup
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Find and extract ZIP
+      - name: Locate ZIP
+        shell: bash
         run: |
-          ZIP_PATH="$(find "$GITHUB_WORKSPACE" -name '*.zip' -type f | head -n 1)"
+          ZIP_PATH="$(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -iname '*.zip' | head -n 1)"
 
           if [ -z "$ZIP_PATH" ]; then
-            echo "ERROR: ZIP file not found"
+            echo "No project ZIP found!"
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_PATH"
+          echo "ZIP found: $ZIP_PATH"
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
 
-          mkdir -p /tmp/sadee_project
-          unzip -o "$ZIP_PATH" -d /tmp/sadee_project
+      - name: Extract Project
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/sadee"
 
-          PROJECT_DIR="$(find /tmp/sadee_project -name package.json -type f | head -n 1 | xargs dirname)"
+          unzip -oq "$ZIP_PATH" -d "$RUNNER_TEMP/sadee"
+
+          PROJECT_DIR="$(find "$RUNNER_TEMP/sadee" -type f -name package.json -print -quit | xargs dirname)"
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: package.json not found"
+            echo "package.json not found!"
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project located: $PROJECT_DIR"
 
-      - name: Install dependencies
-        run: npm install
-        working-directory: /tmp/sadee_project/sadee_apk_ready
+      - name: Android SDK Setup
+        shell: bash
+        run: |
+          set -e
 
-      - name: Generate Android project
-        run: npx cap add android
-        working-directory: /tmp/sadee_project/sadee_apk_ready
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
 
-      - name: Sync Capacitor
-        run: npx cap sync android
-        working-directory: /tmp/sadee_project/sadee_apk_ready
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found"
+            exit 1
+          fi
+
+          echo "Using sdkmanager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+          npm install
+
+      - name: Create Android Project
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Capacitor Sync
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+          npx cap sync android
 
       - name: Build APK
+        shell: bash
         run: |
-          cd android
+          cd "$PROJECT_DIR/android"
+
           chmod +x gradlew
-          ./gradlew assembleDebug
-        working-directory: /tmp/sadee_project/sadee_apk_ready
+
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          APK="$(find "$PROJECT_DIR/android/app/build/outputs/apk/debug" -name '*.apk' -type f | head -n 1)"
+
+          if [ -z "$APK" ]; then
+            echo "APK not found!"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/final_apk"
+          cp "$APK" "$RUNNER_TEMP/final_apk/SADEE-EDITOR-PRO.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SADEE-EDITOR-PRO-APK
-          path: /tmp/sadee_project/sadee_apk_ready/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ runner.temp }}/final_apk/SADEE-EDITOR-PRO.apk
           if-no-files-found: error
+          retention-days: 7
