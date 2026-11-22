@@ -1,10 +1,14 @@
 
-name: SADEE EDITOR PRO FINAL APK
+name: SADEE X DIMA V2 - ZIP Extract & Build
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+    paths:
+      - '*.zip'
+      - '.github/workflows/build.yml'
 
 permissions:
   contents: read
@@ -14,198 +18,74 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Find Source ZIP
+        id: source
+        shell: bash
+        run: |
+          set -e
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
-      - name: Setup Java
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Source ZIP not found!"
+            exit 1
+          fi
+
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "Found: $ZIP"
+
+      - name: Extract ZIP
+        run: |
+          mkdir -p extracted
+          unzip -o "${{ steps.source.outputs.zip }}" -d extracted
+
+          echo "ZIP Extracted Successfully"
+          ls -la extracted
+
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Locate or extract project
-        shell: bash
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Check Android Project
         run: |
-          set -euo pipefail
+          test -f extracted/settings.gradle
+          test -d extracted/optimizer-app
+          test -d extracted/admin-app
+          echo "Project structure verified"
 
-          ROOT="$GITHUB_WORKSPACE"
-          TEMP_PROJECT="$RUNNER_TEMP/sadee_project"
-
-          mkdir -p "$TEMP_PROJECT"
-
-          PROJECT_DIR=""
-
-          PROJECT_DIR="$(find "$ROOT" -type f -name package.json \
-            -not -path '*/node_modules/*' \
-            -not -path '*/android/*' \
-            -not -path '*/www/*' \
-            -print -quit | xargs -r dirname || true)"
-
-          if [ -z "$PROJECT_DIR" ]; then
-            ZIP_PATH="$(find "$ROOT" -type f -iname '*.zip' -print -quit || true)"
-
-            if [ -z "$ZIP_PATH" ]; then
-              echo "Project and ZIP not found!"
-              exit 1
-            fi
-
-            unzip -oq "$ZIP_PATH" -d "$TEMP_PROJECT"
-
-            PROJECT_DIR="$(find "$TEMP_PROJECT" -type f -name package.json \
-              -not -path '*/node_modules/*' \
-              -print -quit | xargs -r dirname || true)"
-          fi
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "Unable to locate project folder"
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Located: $PROJECT_DIR"
-
-      - name: Validate web source
-        shell: bash
+      - name: Build Both APKs
+        working-directory: extracted
         run: |
-          set -euo pipefail
+          gradle --no-daemon clean assembleDebug
 
-          cd "$PROJECT_DIR"
-
-          if [ ! -f index.html ]; then
-            echo "index.html missing!"
-            exit 1
-          fi
-
-          mkdir -p www
-
-          echo "Web source validated"
-
-      - name: Prepare Web Assets
-        shell: bash
+      - name: Prepare APK Files
         run: |
-          set -euo pipefail
+          mkdir -p release
 
-          cd "$PROJECT_DIR"
+          cp extracted/optimizer-app/build/outputs/apk/debug/*.apk \
+            release/SADEE_X_DIMA_OPTIMIZER_V2.apk
 
-          mkdir -p www
+          cp extracted/admin-app/build/outputs/apk/debug/*.apk \
+            release/SADEE_X_DIMA_ADMIN_V2.apk
 
-          rsync -av \
-            --exclude 'www/' \
-            --exclude 'android/' \
-            --exclude 'node_modules/' \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            --exclude '*.zip' \
-            --exclude 'package.json' \
-            --exclude 'package-lock.json' \
-            --exclude 'capacitor.config.json' \
-            --exclude 'README*' \
-            ./ www/
+          ls -lh release/
 
-          if [ ! -f www/index.html ]; then
-            echo "www/index.html was not created"
-            exit 1
-          fi
-
-          echo "Web assets ready"
-
-      - name: Fix Capacitor configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          node <<'NODE'
-          const fs = require('fs');
-
-          const file = 'capacitor.config.json';
-          let config = {};
-
-          if (fs.existsSync(file)) {
-            config = JSON.parse(fs.readFileSync(file, 'utf8'));
-          }
-
-          config.appId = config.appId || 'com.sadee.editorpro';
-          config.appName = config.appName || 'SADEE EDITOR PRO';
-          config.webDir = 'www';
-
-          delete config.bundledWebRuntime;
-
-          fs.writeFileSync(file, JSON.stringify(config, null, 2));
-          console.log(config);
-          NODE
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          npm install
-
-      - name: Generate Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          if [ ! -d android ]; then
-            npx cap add android
-          fi
-
-      - name: Capacitor Sync
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          test -f www/index.html
-
-          npx cap sync android
-
-      - name: Build APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR/android"
-
-          chmod +x gradlew
-
-          ./gradlew assembleDebug --no-daemon
-
-      - name: Verify APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "APK missing!"
-            exit 1
-          fi
-
-          mkdir -p "$RUNNER_TEMP/apk"
-
-          cp "$APK" "$RUNNER_TEMP/apk/SADEE-EDITOR-PRO.apk"
-
-          ls -lh "$RUNNER_TEMP/apk/SADEE-EDITOR-PRO.apk"
-
-      - name: Upload APK
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-EDITOR-PRO-APK
-          path: ${{ runner.temp }}/apk/SADEE-EDITOR-PRO.apk
+          name: SADEE-X-DIMA-V2-APKs
+          path: release/*.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
