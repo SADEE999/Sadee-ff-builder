@@ -51,12 +51,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK Packages
+      - name: Setup Android SDK
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "ANDROID_HOME=$ANDROID_HOME"
 
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
             -type f -name sdkmanager -print -quit)
@@ -79,18 +77,20 @@ jobs:
           gradle-version: '8.9'
 
       - name: Check Android Project
+        working-directory: extracted/SADEE_X_DIMA_PRO
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f extracted/settings.gradle
-          test -d extracted/optimizer-app
-          test -d extracted/admin-app
+          test -f settings.gradle
+          test -f build.gradle
+          test -d optimizer-app
+          test -d admin-app
 
-          echo "Project structure verified"
+          echo "Android project verified!"
 
       - name: Build Both APKs
-        working-directory: extracted
+        working-directory: extracted/SADEE_X_DIMA_PRO
         run: |
           gradle --no-daemon clean assembleDebug
 
@@ -99,12 +99,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          PROJECT="extracted/SADEE_X_DIMA_PRO"
           mkdir -p release
 
-          OPTIMIZER=$(find extracted/optimizer-app/build/outputs/apk \
+          OPTIMIZER=$(find "$PROJECT/optimizer-app/build/outputs/apk" \
             -type f -name '*.apk' -print -quit)
 
-          ADMIN=$(find extracted/admin-app/build/outputs/apk \
+          ADMIN=$(find "$PROJECT/admin-app/build/outputs/apk" \
             -type f -name '*.apk' -print -quit)
 
           test -n "$OPTIMIZER"
