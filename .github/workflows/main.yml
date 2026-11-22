@@ -25,8 +25,9 @@ jobs:
         id: source
         shell: bash
         run: |
-          set -e
-          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+          set -euo pipefail
+
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
 
           if [ -z "$ZIP" ]; then
             echo "ERROR: Source ZIP not found!"
@@ -37,11 +38,11 @@ jobs:
           echo "Found: $ZIP"
 
       - name: Extract ZIP
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p extracted
           unzip -o "${{ steps.source.outputs.zip }}" -d extracted
-
-          echo "ZIP Extracted Successfully"
           ls -la extracted
 
       - name: Setup Java 17
@@ -50,8 +51,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK Packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager -print -quit)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -59,10 +79,14 @@ jobs:
           gradle-version: '8.9'
 
       - name: Check Android Project
+        shell: bash
         run: |
+          set -euo pipefail
+
           test -f extracted/settings.gradle
           test -d extracted/optimizer-app
           test -d extracted/admin-app
+
           echo "Project structure verified"
 
       - name: Build Both APKs
@@ -71,14 +95,23 @@ jobs:
           gradle --no-daemon clean assembleDebug
 
       - name: Prepare APK Files
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p release
 
-          cp extracted/optimizer-app/build/outputs/apk/debug/*.apk \
-            release/SADEE_X_DIMA_OPTIMIZER_V2.apk
+          OPTIMIZER=$(find extracted/optimizer-app/build/outputs/apk \
+            -type f -name '*.apk' -print -quit)
 
-          cp extracted/admin-app/build/outputs/apk/debug/*.apk \
-            release/SADEE_X_DIMA_ADMIN_V2.apk
+          ADMIN=$(find extracted/admin-app/build/outputs/apk \
+            -type f -name '*.apk' -print -quit)
+
+          test -n "$OPTIMIZER"
+          test -n "$ADMIN"
+
+          cp "$OPTIMIZER" release/SADEE_X_DIMA_OPTIMIZER_V2.apk
+          cp "$ADMIN" release/SADEE_X_DIMA_ADMIN_V2.apk
 
           ls -lh release/
 
