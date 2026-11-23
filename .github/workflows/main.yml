@@ -1,5 +1,5 @@
 
-name: SADEE X DIMA V2 - ZIP Extract & Build
+name: SADEE X DIMA - Extract ZIP & Build APKs
 
 on:
   workflow_dispatch:
@@ -21,105 +21,63 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Find Source ZIP
-        id: source
-        shell: bash
+      - name: Find and Extract Project ZIP
         run: |
-          set -euo pipefail
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
-          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
-
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: Source ZIP not found!"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found!"
             exit 1
           fi
 
-          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
-          echo "Found: $ZIP"
+          echo "Found ZIP: $ZIP_FILE"
 
-      - name: Extract ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
           mkdir -p extracted
-          unzip -o "${{ steps.source.outputs.zip }}" -d extracted
-          ls -la extracted
+          unzip -o "$ZIP_FILE" -d extracted
 
-      - name: Setup Java 17
+          echo "ZIP extracted successfully!"
+          find extracted -maxdepth 3 -type f | head -100
+
+      - name: Locate Android Project
+        run: |
+          SETTINGS=$(find extracted -name settings.gradle.kts -o -name settings.gradle | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: Android project not found!"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "Android project: $PROJECT_DIR"
+
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
-            -type f -name sdkmanager -print -quit)
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found"
-            exit 1
-          fi
-
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-
-          "$SDKMANAGER" --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Setup Gradle 8.9
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Check Android Project
-        working-directory: extracted/SADEE_X_DIMA_PRO
-        shell: bash
+      - name: Build Optimizer APK
         run: |
-          set -euo pipefail
+          gradle -p "$PROJECT_DIR" :optimizer-app:assembleDebug
 
-          test -f settings.gradle
-          test -f build.gradle
-          test -d optimizer-app
-          test -d admin-app
-
-          echo "Android project verified!"
-
-      - name: Build Both APKs
-        working-directory: extracted/SADEE_X_DIMA_PRO
+      - name: Build Admin APK
         run: |
-          gradle --no-daemon clean assembleDebug
+          gradle -p "$PROJECT_DIR" :admin-app:assembleDebug
 
-      - name: Prepare APK Files
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="extracted/SADEE_X_DIMA_PRO"
-          mkdir -p release
-
-          OPTIMIZER=$(find "$PROJECT/optimizer-app/build/outputs/apk" \
-            -type f -name '*.apk' -print -quit)
-
-          ADMIN=$(find "$PROJECT/admin-app/build/outputs/apk" \
-            -type f -name '*.apk' -print -quit)
-
-          test -n "$OPTIMIZER"
-          test -n "$ADMIN"
-
-          cp "$OPTIMIZER" release/SADEE_X_DIMA_OPTIMIZER_V2.apk
-          cp "$ADMIN" release/SADEE_X_DIMA_ADMIN_V2.apk
-
-          ls -lh release/
-
-      - name: Upload APK Artifacts
+      - name: Upload Optimizer APK
         uses: actions/upload-artifact@v4
         with:
-          name: SADEE-X-DIMA-V2-APKs
-          path: release/*.apk
-          if-no-files-found: error
-          retention-days: 14
+          name: SADEE-X-DIMA-OPTIMIZER
+          path: ${{ env.PROJECT_DIR }}/optimizer-app/build/outputs/apk/debug/*.apk
+
+      - name: Upload Admin APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SADEE-X-DIMA-ADMIN
+          path: ${{ env.PROJECT_DIR }}/admin-app/build/outputs/apk/debug/*.apk
